@@ -44,7 +44,7 @@ parse_delta <- function(path) {
   keep <- delta_vals != 0L
   deltas_per_block <- split(
     delta_vals[keep],
-    factor(delta_aln_id[keep], levels = seq_len(sum(is_coord)))
+    factor(delta_aln_id[keep], levels = seq_along(S1))
   )
 
   # Return a list of blocks
@@ -93,7 +93,6 @@ build_alignment <- function(ref_seq, qry_seq, block) {
 
   list(ref = ref_aln, qry = qry_aln)
 }
-
 
 make_blocks_main <- function(input_fasta, input_delta, input_csv) {
   seqs <- read.fasta(input_fasta,
