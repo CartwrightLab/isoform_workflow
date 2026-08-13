@@ -63,10 +63,10 @@ parse_delta <- function(path) {
 }
 
 insert_gaps <- function(chars, at) {
-  n <- length(chars)
   if (length(at) == 0L) {
     return(chars)
   }
+  n <- length(chars)
   gaps_le <- findInterval(seq_len(n), at) # num of `at` values <= k
   final_pos <- seq_len(n) + gaps_le # each char's final position
   result <- rep.int("-", n + length(at))
