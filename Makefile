@@ -31,3 +31,5 @@ data/genomic_aln_delta/%.delta: data/fasta_raw/%.fasta
 	bash scripts/mk_genomic_delta.bash $< $@
 
 
+data/genomic_aln/%.json : data/fasta_raw/%.fasta data/genomic_aln_delta/%.delta data/homology/%.csv
+	Rscript --vanilla scripts/mk_genomic_blocks.R $^ $@

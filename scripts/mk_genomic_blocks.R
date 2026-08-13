@@ -1,6 +1,7 @@
 #!/usr/bin/env Rscript --vanilla
 
 library(seqinr)
+library(jsonlite)
 
 parse_delta <- function(path) {
   body <- trimws(readLines(path, warn = FALSE)[-(1:2)])
@@ -73,9 +74,6 @@ insert_gaps <- function(chars, at) {
   result
 }
 
-# Slide all gaps to the right if they don't change the matches in the alignment
-normalize_alignment <- function(ref_seq, qry_seq) {}
-
 build_alignment <- function(ref_seq, qry_seq, block) {
   ref_chars <- strsplit(substr(ref_seq, block$S1, block$E1), "", fixed = TRUE)[[1]]
   qry_chars <- strsplit(substr(qry_seq, block$S2, block$E2), "", fixed = TRUE)[[1]]
@@ -92,21 +90,63 @@ build_alignment <- function(ref_seq, qry_seq, block) {
   ref_aln <- insert_gaps(ref_chars, gaps_ref)
   qry_aln <- insert_gaps(qry_chars, gaps_qry)
   stopifnot(length(ref_aln) == length(qry_aln))
+
+  list(ref = ref_aln, qry = qry_aln)
 }
 
 
-mk_blocks_main <- function(input_fasta, input_delta, input_csv, output_json) {
+make_blocks_main <- function(input_fasta, input_delta, input_csv) {
   seqs <- read.fasta(input_fasta,
     seqtype = "DNA", as.string = TRUE, forceDNAtolower = FALSE,
     set.attributes = FALSE
   )
+  csv <- read.csv(input_csv, header = TRUE)
+  species_tab <- setNames(csv[["species"]], csv[["gene_id"]])
 
   blocks <- parse_delta(input_delta)
+
+  refs <- sapply(blocks, `[[`, "ref")
+  qrys <- sapply(blocks, `[[`, "qry")
+  g <- interaction(refs, qrys, sep = "-")
+
+  grouped_blocks <- split(blocks, g, drop = TRUE)
+  alignments <- list()
+  for (blocks in grouped_blocks) {
+    ref_id <- blocks[[1]]$ref
+    qry_id <- blocks[[1]]$qry
+    ref_len <- blocks[[1]]$reflen
+    qry_len <- blocks[[1]]$qrylen
+
+    block_alns <- list()
+    for (block in blocks) {
+      aln <- build_alignment(seqs[ref_id], seqs[qry_id], block)
+      block_alns[[length(block_alns) + 1L]] <- list(
+        reference = list(start = block$S1, end = block$E1, aligned = paste0(aln$ref, collapse = "")),
+        query = list(start = block$S2, end = block$E2, aligned = paste0(aln$qry, collapse = ""))
+      )
+    }
+
+    alignments[[length(alignments) + 1L]] <- list(
+      reference = list(id = ref_id, length = ref_len),
+      query = list(id = qry_id, length = qry_len),
+      blocks = block_alns
+    )
+  }
+
+  dat <- list(
+    ids = names(seqs),
+    species = setNames(species_tab[sub("[.]\\d+$", "", names(seqs))], NULL),
+    lengths = nchar(seqs),
+    sequences = setNames(seqs, NULL)
+  )
+
+  list(data = dat, alignments = alignments)
 }
 
 if (!interactive()) {
   args <- commandArgs(trailingOnly = TRUE)
   stopifnot(length(args) >= 4)
 
-  mk_blocks_main(args[1], args[2], args[3], args[4])
+  output <- make_blocks_main(args[1], args[2], args[3])
+  write_json(output, args[4], auto_unbox = TRUE, pretty = 2)
 }
