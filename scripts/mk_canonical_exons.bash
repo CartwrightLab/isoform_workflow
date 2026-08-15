@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 
+# Identify the canonical transcript for a human gene and extract data about
+# its translation and exons.
+
 set -euo pipefail
 
 input_gene="${1}"
 input_json="${2:-/dev/stdin}"
 output_json="${3:-/dev/stdout}"
 
-# This jq filter extracts out the important information for 
 jq -c ".${input_gene} as \$g
   | (\$g.Transcript[] | select(.is_canonical == 1)) as \$t
   | \$t.Exon as \$e

@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+# Construct lastz alignments of gene regions against a reference gene region.
+
 set -euo pipefail
 
 # Script arguments and defaults

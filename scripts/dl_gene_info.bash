@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+# Download information for a set of human genes from ensembl using its REST API.
+# Use a POST request to download information in bulk.
+
 set -euo pipefail
 
 input_list="${1:-/dev/stdin}"

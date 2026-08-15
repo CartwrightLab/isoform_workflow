@@ -1,27 +1,73 @@
 #!/usr/bin/env Rscript --vanilla
 
+# Construct a draft multiple sequence alignment of a CDS region based on
+# alignment blocks produced by lastz.
+#
+# ## Steps
+#
+# 1. Blocks are grouped by query sequence ids.
+# 2. Blocks are sorted by score and overlaps are discarded.
+#   - The higher scoring block is kept.
+#   - Overlap is only checked on the reference strand.
+# 3. A global alignment is constructed from the alignment blocks.
+#   - Missing sections in the aligned reference are replaced by the reference
+#   - Missing sections in the aligned query are replaced by "n"
+# 4. The pairwise alignment is trimmed to just contain the coding exons.
+# 5. A "reference-based" MSA is constructed assuming star-tree.
+
 library(seqinr)
 library(jsonlite)
 
-build_global_alignment <- function(ref_seq, aln) {
+filter_overlaps <- function(start, end) {
+  n <- length(start)
+  stopifnot(length(end) == n)
+
+  ov <- outer(start, end, `<=`) & outer(end, start, `>=`)
+
+  keep <- logical(n)
+  for (i in seq_len(n)) {
+    keep[i] <- !any(ov[i, keep])
+  }
+
+  keep
+}
+
+build_global_alignment <- function(ref_seq, blocks, scores) {
   len <- nchar(ref_seq)
 
-  S1 <- sapply(aln$blocks, \(x) x$reference$start)
-  E1 <- sapply(aln$blocks, \(x) x$reference$end)
-  A1 <- sapply(aln$blocks, \(x) x$reference$aligned)
-  S2 <- sapply(aln$blocks, \(x) x$query$start)
-  E2 <- sapply(aln$blocks, \(x) x$query$end)
-  A2 <- sapply(aln$blocks, \(x) x$query$aligned)
+  # create wide table
+  S1 <- sapply(blocks, \(x) x$start[1])
+  E1 <- sapply(blocks, \(x) x$end[1])
+  A1 <- sapply(blocks, \(x) x$aligned[1])
+  S2 <- sapply(blocks, \(x) x$start[2])
+  E2 <- sapply(blocks, \(x) x$end[2])
+  A2 <- sapply(blocks, \(x) x$aligned[2])
+
+  tab <- data.frame(
+    S1 = S1, E1 = E1, A1 = A1,
+    S2 = S2, E2 = E2, A2 = A2,
+    score = scores
+  )
+
+  # reorder blocks by scores
+  o <- order(tab$score, decreasing = TRUE)
+  tab <- tab[o, ]
+
+  # identify the primary blocks, subset, and reorder
+  p <- filter_overlaps(tab$S1, tab$E1) # & filter_overlaps(tab$S2, tab$E2)
+  tab <- tab[p, ]
+  o <- order(tab$S1)
+  tab <- tab[o, ]
 
   # Spacers between blocks
-  Sz <- c(1L, E1 + 1L)
-  Ez <- c(S1 - 1L, len)
+  Sz <- c(1L, tab$E1 + 1L)
+  Ez <- c(tab$S1 - 1L, len)
   Az <- substring(ref_seq, Sz, Ez)
   Nz <- strrep("n", nchar(Az))
 
   # build reference alignment
-  ref <- paste0(c("", A1), Az, collapse = "")
-  qry <- paste0(c("", A2), Nz, collapse = "")
+  ref <- paste0(c("", tab$A1), Az, collapse = "")
+  qry <- paste0(c("", tab$A2), Nz, collapse = "")
   stopifnot(nchar(ref) == nchar(qry))
 
   c(ref = ref, qry = qry)
@@ -114,9 +160,9 @@ shatter_alignment <- function(aln) {
 
 make_cds_main <- function(input_info, input_blocks) {
   info <- read_json(input_info, simplifyVector = TRUE)
-  blocks <- read_json(input_blocks, simplifyVector = TRUE, simplifyDataFrame = FALSE)
+  blocks <- read_json(input_blocks, simplifyVector = TRUE)
 
-  ref_id <- blocks$data$ids[1]
+  ref_id <- blocks$data$seq_ids[1]
   ref_seq <- blocks$data$sequences[1]
 
   seq_start <- info$start
@@ -136,24 +182,32 @@ make_cds_main <- function(input_info, input_blocks) {
     exon_lefts <- exon_starts[o]
     exon_rights <- exon_ends[o]
   }
+  cds_len <- sum(exon_rights - exon_lefts + 1L)
+
   # Sanity checks
   stopifnot(length(exon_lefts) == length(exon_rights) && length(exon_lefts) > 0L)
   stopifnot(!is.unsorted(exon_lefts, strictly = TRUE))
   stopifnot(!is.unsorted(exon_rights, strictly = TRUE))
   stopifnot(all(exon_lefts <= exon_rights))
 
-  cds_len <- sum(exon_rights - exon_lefts + 1L)
-
-  query_ids <- sapply(blocks$alignments, \(x) x$query$id)
-  species_ids <- blocks$data$species[match(query_ids, blocks$data$ids)]
-  seq_names <- paste(species_ids, query_ids)
+  # Group blocks by query_id
+  query_ids <- sapply(blocks$blocks, \(x) x$seq_id[2])
+  grouped_blocks <- split(blocks$blocks, query_ids)
+  grouped_scores <- split(blocks$block_scores, query_ids)
+  species_ids <- blocks$data$species[match(names(grouped_blocks), blocks$data$seq_ids)]
+  seq_names <- paste(species_ids, names(grouped_blocks))
 
   cds_matrix <- matrix("", nrow = cds_len + 1L, ncol = length(seq_names))
 
-  for (i in seq_along(blocks$alignments)) {
-    aln <- blocks$alignments[[i]]
-    stopifnot(aln$reference$id == ref_id)
-    a <- build_global_alignment(ref_seq, aln)
+  for (i in seq_along(grouped_blocks)) {
+    block_group <- grouped_blocks[[i]]
+    score_group <- grouped_scores[[i]]
+
+    # sanity check
+    group_ref_id <- sapply(block_group, \(x) x$seq_id[1])
+    stopifnot(all(group_ref_id == ref_id))
+
+    a <- build_global_alignment(ref_seq, block_group, score_group)
     cds <- subset_alignment(a, exon_lefts, exon_rights)
     # cds <- normalize_alignment(cds)
     cds_matrix[, i] <- shatter_alignment(cds)

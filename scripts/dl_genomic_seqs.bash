@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+# Download genomic seqeunces for a set of homologous genes. This batches genes
+# using a POST request, but is limited to 50 genes at a time.
+
 set -euo pipefail
 
 input_csv="${1:-/dev/stdin}"
