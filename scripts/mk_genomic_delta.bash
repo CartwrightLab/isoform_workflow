@@ -20,5 +20,8 @@ awk '/^>/{n++} n>1{exit} {print}' "$input_fasta" > "$ref_fasta"
 
 # Align the whole file (all sequences, including the reference itself) against it
 # Filter the resulting delta file for global best hit for each query
-"$NUCMER_BIN" --delta=/dev/stdout "$ref_fasta" "$input_fasta" \
-  | "$FILTER_BIN" -g -q /dev/stdin > "$output_delta"
+"$NUCMER_BIN" -f --delta=/dev/stdout "$ref_fasta" "$input_fasta" \
+  | "$FILTER_BIN" -q -g /dev/stdin > "$output_delta"
+
+
+#  lastz ref.fasta AREG.fasta --gfextend --chain --gapped --strand=plus --inner=1000 --format=maf

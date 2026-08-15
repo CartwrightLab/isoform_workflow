@@ -11,7 +11,7 @@ test $(wc -l < ${input_list}) -le 1000 || exit 1
 # Construct POST request body
 body=$(jq -R -s -c 'split("\n") | map(select(length > 0)) | {symbols: ., expand: 1}' "${input_list}")
 
-curl -s 'https://rest.ensembl.org/lookup/symbol/homo_sapiens' \
+curl -f -s 'https://rest.ensembl.org/lookup/symbol/homo_sapiens' \
 	-H 'Content-type:application/json' \
 	-H 'Accept:application/json' \
 	-X POST -d "$body" -o "$output_json"

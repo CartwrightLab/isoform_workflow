@@ -94,7 +94,44 @@ build_alignment <- function(ref_seq, qry_seq, block) {
   list(ref = ref_aln, qry = qry_aln)
 }
 
-make_blocks_main <- function(input_fasta, input_delta, input_csv) {
+parse_maf <- function(path) {
+  body <- trimws(readLines(path, warn = FALSE))
+  body <- body[nzchar(body)]
+  body <- body[!startsWith(body, "#")]
+  fields <- strsplit(body, "\\s+")
+
+  op <- vapply(fields, `[`, "", 1L)
+
+  is_alnheader <- op == "a"
+  is_seq <- op == "s"
+  stopifnot(all(is_alnheader | is_seq))
+
+  aln_fields <- fields[is_alnheader]
+  score <- as.numeric(sub("^score=", "", vapply(aln_fields, `[`, "", 2L)))
+
+  aln_id <- cumsum(is_alnheader)
+  stopifnot(all(aln_id[is_seq] > 0L))
+
+  seq_fields <- fields[is_seq]
+  id <- vapply(seq_fields, `[`, "", 2L)
+  start <- as.numeric(vapply(seq_fields, `[`, "", 3L)) + 1L
+  len <- as.numeric(vapply(seq_fields, `[`, "", 4L))
+  end <- start + len - 1L
+  aligned <- vapply(seq_fields, `[`, "", 7L)
+  score <- score[aln_id[is_seq]]
+
+  data <- data.frame(
+    aln_id = aln_id[is_seq],
+    score = score,
+    seq_id = id,
+    start = start,
+    end = end,
+    aligned = aligned
+  )
+  data
+}
+
+make_blocks_main <- function(input_fasta, input_maf, input_csv) {
   seqs <- read.fasta(input_fasta,
     seqtype = "DNA", as.string = TRUE, forceDNAtolower = FALSE,
     set.attributes = FALSE
@@ -102,44 +139,30 @@ make_blocks_main <- function(input_fasta, input_delta, input_csv) {
   csv <- read.csv(input_csv, header = TRUE)
   species_tab <- setNames(csv[["species"]], csv[["gene_id"]])
 
-  blocks <- parse_delta(input_delta)
+  maf_blocks <- parse_maf(input_maf)
 
-  refs <- sapply(blocks, `[[`, "ref")
-  qrys <- sapply(blocks, `[[`, "qry")
-  g <- interaction(refs, qrys, sep = "-")
+  aln_id <- maf_blocks$aln_id
+  block_score <- maf_blocks$score
 
-  grouped_blocks <- split(blocks, g, drop = TRUE)
-  alignments <- list()
-  for (blocks in grouped_blocks) {
-    ref_id <- blocks[[1]]$ref
-    qry_id <- blocks[[1]]$qry
-    ref_len <- blocks[[1]]$reflen
-    qry_len <- blocks[[1]]$qrylen
-
-    block_alns <- list()
-    for (block in blocks) {
-      aln <- build_alignment(seqs[ref_id], seqs[qry_id], block)
-      block_alns[[length(block_alns) + 1L]] <- list(
-        reference = list(start = block$S1, end = block$E1, aligned = paste0(aln$ref, collapse = "")),
-        query = list(start = block$S2, end = block$E2, aligned = paste0(aln$qry, collapse = ""))
-      )
-    }
-
-    alignments[[length(alignments) + 1L]] <- list(
-      reference = list(id = ref_id, length = ref_len),
-      query = list(id = qry_id, length = qry_len),
-      blocks = block_alns
-    )
-  }
+  aln_blocks <- maf_blocks[setdiff(names(maf_blocks), c("score", "aln_id"))]
+  aln_blocks <- split(aln_blocks, aln_id)
+  names(aln_blocks) <- NULL
+  # g <- sapply(aln_blocks, \(x) paste0(x$seq_id, collapse = "-"))
+  # aln_blocks <- split(aln_blocks, g)
+  # names(aln_blocks) <- NULL
 
   dat <- list(
-    ids = names(seqs),
+    seq_ids = names(seqs),
     species = setNames(species_tab[sub("[.]\\d+$", "", names(seqs))], NULL),
     lengths = nchar(seqs),
     sequences = setNames(seqs, NULL)
   )
 
-  list(data = dat, alignments = alignments)
+  list(
+    data = dat,
+    blocks = aln_blocks,
+    block_scores = block_score[!duplicated(aln_id)]
+  )
 }
 
 if (!interactive()) {

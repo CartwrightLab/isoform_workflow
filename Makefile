@@ -21,19 +21,24 @@ data/homology_raw/%.json:
 
 # Extract ENSEMBL IDs from homology information
 data/homology/%.csv: data/homology_raw/%.json
+	@mkdir -p $(@D)
 	bash scripts/mk_homology_csv.bash $< $@
 
 # Download unaligned data for each species
 data/fasta_raw/%.fasta: data/homology/%.csv
+	@mkdir -p $(@D)
 	bash scripts/dl_genomic_seqs.bash $< $@
 
-# Align gene regions using nucmer and create alignment info as delta file
-data/genomic_aln_delta/%.delta: data/fasta_raw/%.fasta
-	bash scripts/mk_genomic_delta.bash $< $@
+# Align gene regions using lastz
+data/genomic_maf/%.maf: data/fasta_raw/%.fasta
+	@mkdir -p $(@D)
+	bash scripts/mk_genomic_maf.bash $< $@
 
 # Produce aligned blocks from the delta alignments
-data/genomic_aln/%.json: data/fasta_raw/%.fasta data/genomic_aln_delta/%.delta data/homology/%.csv
+data/genomic_blocks/%.json: data/fasta_raw/%.fasta data/genomic_maf/%.maf data/homology/%.csv
+	@mkdir -p $(@D)
 	Rscript --vanilla scripts/mk_genomic_blocks.R $^ $@
 
 data/cds_aln/%.fasta: data/gene_info/%.json data/genomic_aln/%.json
+	@mkdir -p $(@D)
 	Rscript --vanilla scripts/mk_cds_aln.R $^ $@

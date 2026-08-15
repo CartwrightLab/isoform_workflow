@@ -3,15 +3,6 @@
 library(seqinr)
 library(jsonlite)
 
-pos_to_col <- function(x, seq) {
-  p <- gregexpr("-", seq)[[1]]
-  if (p[1] == -1) {
-    return(x)
-  }
-  v <- p - seq_along(p)
-  x + findInterval(x - 1, v)
-}
-
 build_global_alignment <- function(ref_seq, aln) {
   len <- nchar(ref_seq)
 
@@ -36,6 +27,15 @@ build_global_alignment <- function(ref_seq, aln) {
   c(ref = ref, qry = qry)
 }
 
+pos_to_col <- function(x, seq) {
+  p <- gregexpr("-", seq)[[1]]
+  if (p[1] == -1) {
+    return(x)
+  }
+  v <- p - seq_along(p)
+  x + findInterval(x - 1, v)
+}
+
 subset_alignment <- function(aln, start, stop) {
   start <- pos_to_col(start, aln[1])
   stop <- pos_to_col(stop, aln[1])
@@ -44,25 +44,22 @@ subset_alignment <- function(aln, start, stop) {
 
 normalize_alignment <- function(aln) {
   aln <- strsplit(aln, "", fixed = TRUE)
-  ref <- aln[[1]]
-  qry <- aln[[2]]
-  stopifnot(length(ref) == length(qry))
-  n <- length(ref)
-  o <- ref != "-" & qry != "-"
-  ref <- ref[ref != "-"]
-  qry <- qry[qry != "-"]
+  ref0 <- aln[[1]]
+  qry0 <- aln[[2]]
+  stopifnot(length(ref0) == length(qry0))
+  n <- length(ref0)
+  o <- ref0 != "-" & qry0 != "-"
+  ref <- ref0[ref0 != "-"]
+  qry <- qry0[qry0 != "-"]
 
-  ref_m <- aln[[1]][o]
-  qry_m <- aln[[2]][o]
+  ref_m <- ref0[o]
+  qry_m <- qry0[o]
   len_r <- length(ref)
   len_q <- length(qry)
 
   index_r <- integer(len_r)
   index_q <- integer(len_q)
-  r <- 1L
-  q <- 1L
-  k <- 1L
-
+  r <- q <- k <- 1L
   for (m in seq_along(ref_m)) {
     while (ref[r] != ref_m[m]) {
       index_r[r] <- k
@@ -90,13 +87,15 @@ normalize_alignment <- function(aln) {
   if (q <= len_q) {
     nn <- len_q - q + 1L
     index_q[q:len_q] <- seq.int(k, length.out = nn)
+    k <- k + nn
   }
+  stopifnot(k == n + 1L)
 
   # Map sequences to alignment columns
-  ref_o <- rep("-", n)
+  ref_o <- rep.int("-", n)
   ref_o[index_r] <- ref
   ref_o <- paste0(ref_o, collapse = "")
-  qry_o <- rep("-", n)
+  qry_o <- rep.int("-", n)
   qry_o[index_q] <- qry
   qry_o <- paste0(qry_o, collapse = "")
 
@@ -156,7 +155,7 @@ make_cds_main <- function(input_info, input_blocks) {
     stopifnot(aln$reference$id == ref_id)
     a <- build_global_alignment(ref_seq, aln)
     cds <- subset_alignment(a, exon_lefts, exon_rights)
-    cds <- normalize_alignment(cds)
+    # cds <- normalize_alignment(cds)
     cds_matrix[, i] <- shatter_alignment(cds)
   }
 
