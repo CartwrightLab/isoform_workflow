@@ -29,16 +29,7 @@ data/fasta_raw/%.fasta: data/homology/%.csv
 	@mkdir -p $(@D)
 	bash scripts/dl_genomic_seqs.bash $< $@
 
-# Align gene regions using lastz
-data/genomic_maf/%.maf: data/fasta_raw/%.fasta
-	@mkdir -p $(@D)
-	bash scripts/mk_genomic_maf.bash $< $@
-
-# Produce aligned blocks from the delta alignments
-data/genomic_blocks/%.json: data/fasta_raw/%.fasta data/genomic_maf/%.maf data/homology/%.csv
-	@mkdir -p $(@D)
-	Rscript --vanilla scripts/mk_genomic_blocks.R $^ $@
-
-data/cds_aln/%.fasta: data/gene_info/%.json data/genomic_blocks/%.json
+# Align CDS sequences using CESAR
+data/fasta_cds/%.fasta: data/fasta_raw/%.fasta data/gene_info/%.json data/homology/%.csv
 	@mkdir -p $(@D)
 	Rscript --vanilla scripts/mk_cds_aln.R $^ $@

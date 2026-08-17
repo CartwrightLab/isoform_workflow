@@ -1,151 +1,59 @@
 #!/usr/bin/env Rscript --vanilla
 
-# Construct a draft multiple sequence alignment of a CDS region based on
-# alignment blocks produced by lastz.
-#
-# ## Steps
-#
-# 1. Blocks are grouped by query sequence ids.
-# 2. Blocks are sorted by score and overlaps are discarded.
-#   - The higher scoring block is kept.
-#   - Overlap is only checked on the reference strand.
-# 3. A global alignment is constructed from the alignment blocks.
-#   - Missing sections in the aligned reference are replaced by the reference
-#   - Missing sections in the aligned query are replaced by "n"
-# 4. The pairwise alignment is trimmed to just contain the coding exons.
-# 5. A "reference-based" MSA is constructed assuming star-tree.
-
-library(seqinr)
 library(jsonlite)
 
-filter_overlaps <- function(start, end) {
-  n <- length(start)
-  stopifnot(length(end) == n)
+# read a fasta file into a character vector
+read_fasta <- function(path, text) {
+  lines <- trimws(readLines(path))
+  lines <- lines[nzchar(lines)]
+  lines <- lines[!startsWith(lines, "#")]
+  is_header <- grepl("^>", lines)
+  seq_id <- cumsum(is_header)
 
-  ov <- outer(start, end, `<=`) & outer(end, start, `>=`)
+  # sanity check
+  stopifnot(all(seq_id[!is_header] > 0L))
 
-  keep <- logical(n)
-  for (i in seq_len(n)) {
-    keep[i] <- !any(ov[i, keep])
-  }
+  # extract names
+  n <- sub("^>(\\S+).*", "\\1", lines[is_header])
 
-  keep
+  # build sequences
+  g <- split(lines[!is_header], seq_id[!is_header])
+  g <- vapply(g, paste0, "", collapse = "", USE.NAMES = FALSE)
+  g <- gsub("\\s", "", g)
+
+  setNames(g, n)
 }
 
-build_global_alignment <- function(ref_seq, blocks, scores) {
-  len <- nchar(ref_seq)
+run_cesar <- function(exons, seqs) {
+  exons <- toupper(exons)
 
-  # create wide table
-  S1 <- sapply(blocks, \(x) x$start[1])
-  E1 <- sapply(blocks, \(x) x$end[1])
-  A1 <- sapply(blocks, \(x) x$aligned[1])
-  S2 <- sapply(blocks, \(x) x$start[2])
-  E2 <- sapply(blocks, \(x) x$end[2])
-  A2 <- sapply(blocks, \(x) x$aligned[2])
+  g <- rep(seq_along(exons), nchar(exons))
+  cds <- unlist(strsplit(exons, "", fixed = TRUE))
 
-  tab <- data.frame(
-    S1 = S1, E1 = E1, A1 = A1,
-    S2 = S2, E2 = E2, A2 = A2,
-    score = scores
-  )
+  # Identify and mark split codons
+  y <- seq(1, length(g), 3)
+  b <- (g[y] == g[y + 1] & g[y] == g[y + 2])
+  o <- which(!b)
+  p <- 3 * (o - 1)
+  cds[c(p + 1, p + 2, p + 3)] <- tolower(cds[c(p + 1, p + 2, p + 3)])
+  exons <- sapply(split(cds, g), paste0, collapse = "")
 
-  # reorder blocks by scores
-  o <- order(tab$score, decreasing = TRUE)
-  tab <- tab[o, ]
+  # Write input file for CESAR
+  ref_text <- sprintf(">%s%d\n%s", "exon", seq_along(exons), exons)
+  qry_text <- sprintf(">%s\n%s", names(seqs), seqs)
+  temp_fasta <- tempfile(fileext = ".fasta")
+  on.exit(unlink(temp_fasta))
+  writeLines(c(ref_text, "####", qry_text), temp_fasta)
 
-  # identify the primary blocks, subset, and reorder
-  p <- filter_overlaps(tab$S1, tab$E1) # & filter_overlaps(tab$S2, tab$E2)
-  tab <- tab[p, ]
-  o <- order(tab$S1)
-  tab <- tab[o, ]
+  # Call CESAR
+  output <- system2("bin/cesar", args = temp_fasta, stdout = TRUE, stderr = FALSE)
+  exit_status <- attr(output, "status")
+  stopifnot(is.null(exit_status))
 
-  # Spacers between blocks
-  Sz <- c(1L, tab$E1 + 1L)
-  Ez <- c(tab$S1 - 1L, len)
-  Az <- substring(ref_seq, Sz, Ez)
-  Nz <- strrep("n", nchar(Az))
-
-  # build reference alignment
-  ref <- paste0(c("", tab$A1), Az, collapse = "")
-  qry <- paste0(c("", tab$A2), Nz, collapse = "")
-  stopifnot(nchar(ref) == nchar(qry))
-
-  c(ref = ref, qry = qry)
-}
-
-pos_to_col <- function(x, seq) {
-  p <- gregexpr("-", seq)[[1]]
-  if (p[1] == -1) {
-    return(x)
-  }
-  v <- p - seq_along(p)
-  x + findInterval(x - 1, v)
-}
-
-subset_alignment <- function(aln, start, stop) {
-  start <- pos_to_col(start, aln[1])
-  stop <- pos_to_col(stop, aln[1])
-  sapply(aln, \(x) paste0(substring(x, start, stop), collapse = ""))
-}
-
-normalize_alignment <- function(aln) {
-  aln <- strsplit(aln, "", fixed = TRUE)
-  ref0 <- aln[[1]]
-  qry0 <- aln[[2]]
-  stopifnot(length(ref0) == length(qry0))
-  n <- length(ref0)
-  o <- ref0 != "-" & qry0 != "-"
-  ref <- ref0[ref0 != "-"]
-  qry <- qry0[qry0 != "-"]
-
-  ref_m <- ref0[o]
-  qry_m <- qry0[o]
-  len_r <- length(ref)
-  len_q <- length(qry)
-
-  index_r <- integer(len_r)
-  index_q <- integer(len_q)
-  r <- q <- k <- 1L
-  for (m in seq_along(ref_m)) {
-    while (ref[r] != ref_m[m]) {
-      index_r[r] <- k
-      r <- r + 1L
-      k <- k + 1L
-    }
-    while (qry[q] != qry_m[m]) {
-      index_q[q] <- k
-      q <- q + 1L
-      k <- k + 1L
-    }
-    # Column k corresponds to match m.
-    index_r[r] <- k
-    index_q[q] <- k
-    r <- r + 1L
-    q <- q + 1L
-    k <- k + 1L
-  }
-  # Handle any trailing gaps.
-  if (r <= len_r) {
-    nn <- len_r - r + 1L
-    index_r[r:len_r] <- seq.int(k, length.out = nn)
-    k <- k + nn
-  }
-  if (q <= len_q) {
-    nn <- len_q - q + 1L
-    index_q[q:len_q] <- seq.int(k, length.out = nn)
-    k <- k + nn
-  }
-  stopifnot(k == n + 1L)
-
-  # Map sequences to alignment columns
-  ref_o <- rep.int("-", n)
-  ref_o[index_r] <- ref
-  ref_o <- paste0(ref_o, collapse = "")
-  qry_o <- rep.int("-", n)
-  qry_o[index_q] <- qry
-  qry_o <- paste0(qry_o, collapse = "")
-
-  setNames(c(ref_o, qry_o), names(aln))
+  # Parse output
+  output <- gsub(" ", "?", output)
+  output_fasta <- read_fasta(textConnection(output))
+  output_fasta
 }
 
 shatter_alignment <- function(aln) {
@@ -158,13 +66,16 @@ shatter_alignment <- function(aln) {
   sapply(s, paste0, collapse = "")
 }
 
-make_cds_main <- function(input_info, input_blocks) {
+align_cds_main <- function(input_fasta, input_info, input_csv) {
+  fasta <- read_fasta(input_fasta)
   info <- read_json(input_info, simplifyVector = TRUE)
-  blocks <- read_json(input_blocks, simplifyVector = TRUE)
+  csv <- read.csv(input_csv, header = TRUE)
+  species_tab <- setNames(csv[["species"]], csv[["gene_id"]])
 
-  ref_id <- blocks$data$seq_ids[1]
-  ref_seq <- blocks$data$sequences[1]
+  ref_id <- names(fasta)[1]
+  ref_seq <- fasta[[1]]
 
+  # Identify locations of coding exons in ref_seq
   seq_start <- info$start
   seq_length <- info$end - info$start + 1L
   cds_start <- info$translation$start - seq_start + 1L
@@ -190,29 +101,47 @@ make_cds_main <- function(input_info, input_blocks) {
   stopifnot(!is.unsorted(exon_rights, strictly = TRUE))
   stopifnot(all(exon_lefts <= exon_rights))
 
-  # Group blocks by query_id
-  query_ids <- sapply(blocks$blocks, \(x) x$seq_id[2])
-  grouped_blocks <- split(blocks$blocks, query_ids)
-  grouped_scores <- split(blocks$block_scores, query_ids)
-  species_ids <- blocks$data$species[match(names(grouped_blocks), blocks$data$seq_ids)]
-  seq_names <- paste(species_ids, names(grouped_blocks))
+  # Extract Exons
+  exons <- substring(ref_seq, exon_lefts, exon_rights)
 
-  cds_matrix <- matrix("", nrow = cds_len + 1L, ncol = length(seq_names))
+  # Call CESAR
+  blocks <- run_cesar(exons, fasta)
 
-  for (i in seq_along(grouped_blocks)) {
-    block_group <- grouped_blocks[[i]]
-    score_group <- grouped_scores[[i]]
+  # Process CESAR output
+  aligned_ref <- toupper(blocks[seq.int(1, length(blocks), 2)])
+  aligned_qry <- toupper(blocks[seq.int(2, length(blocks), 2)])
+  spacer <- strrep("n", nchar(exons))
 
-    # sanity check
-    group_ref_id <- sapply(block_group, \(x) x$seq_id[1])
-    stopifnot(all(group_ref_id == ref_id))
+  segment_pos <- gregexpr("[^?]+", aligned_ref)
+  segment_ref <- regmatches(aligned_ref, segment_pos)
+  segment_qry <- regmatches(aligned_qry, segment_pos)
 
-    a <- build_global_alignment(ref_seq, block_group, score_group)
-    cds <- subset_alignment(a, exon_lefts, exon_rights)
-    # cds <- normalize_alignment(cds)
-    cds_matrix[, i] <- shatter_alignment(cds)
+  # add spacers for mixing exons
+  for (i in seq_along(segment_qry)) {
+    ref <- gsub("-", "", segment_ref[[i]], fixed = TRUE)
+    o <- match(ref, exons)
+
+    qry <- spacer
+    qry[o] <- segment_qry[[i]]
+    segment_qry[[i]] <- qry
+
+    ref <- exons
+    ref[o] <- segment_ref[[i]]
+    segment_ref[[i]] <- ref
   }
 
+  # construct pairwise alignments
+  refs <- sapply(segment_ref, paste0, collapse = "")
+  qrys <- sapply(segment_qry, paste0, collapse = "")
+
+  species_ids <- species_tab[sub("[.]\\d+$", "", names(qrys))]
+  seq_names <- paste(species_ids, names(qrys))
+
+  # construct multiple sequence alignments
+  cds_matrix <- matrix("", nrow = cds_len + 1L, ncol = length(seq_names))
+  for (i in seq_along(qrys)) {
+    cds_matrix[, i] <- shatter_alignment(c(refs[[i]], qrys[[i]]))
+  }
   # Remove immortal link
   cds_matrix[1, ] <- sub("^N", "", cds_matrix[1, ])
 
@@ -231,11 +160,20 @@ make_cds_main <- function(input_info, input_blocks) {
   setNames(cds, seq_names)
 }
 
+
 if (!interactive()) {
   args <- commandArgs(trailingOnly = TRUE)
-  stopifnot(length(args) >= 3)
+  stopifnot(length(args) >= 4)
 
-  seqs <- make_cds_main(args[1], args[2])
+  # Get aligned sequences
+  text <- align_cds_main(args[1], args[2], args[3])
 
-  write.fasta(as.list(seqs), names(seqs), args[3], as.string = TRUE)
+  # Wrap sequences
+  text <- gsub("(.{80})", "\\1\n", text)
+
+  # Build Lines
+  lines <- sprintf(">%s\n%s", names(text), text)
+
+  # Save output
+  writeLines(lines, args[4])
 }
