@@ -4,7 +4,7 @@
 
 - GNU Make
 - Bash Shell
-- R (packages: seqinr, jsonlite)
+- R (packages: jsonlite)
 - jq
 - CESAR
 - curl
