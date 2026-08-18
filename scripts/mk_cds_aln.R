@@ -112,7 +112,7 @@ align_cds_main <- function(input_fasta, input_info, input_csv) {
   aligned_qry <- toupper(blocks[seq.int(2, length(blocks), 2)])
   spacer <- strrep("n", nchar(exons))
 
-  segment_pos <- gregexpr("[^?]+", aligned_ref)
+  segment_pos <- gregexpr("[^?>]+", aligned_ref)
   segment_ref <- regmatches(aligned_ref, segment_pos)
   segment_qry <- regmatches(aligned_qry, segment_pos)
 
@@ -120,6 +120,7 @@ align_cds_main <- function(input_fasta, input_info, input_csv) {
   for (i in seq_along(segment_qry)) {
     ref <- gsub("-", "", segment_ref[[i]], fixed = TRUE)
     o <- match(ref, exons)
+    stopifnot(!anyNA(o))
 
     qry <- spacer
     qry[o] <- segment_qry[[i]]
@@ -159,7 +160,6 @@ align_cds_main <- function(input_fasta, input_info, input_csv) {
 
   setNames(cds, seq_names)
 }
-
 
 if (!interactive()) {
   args <- commandArgs(trailingOnly = TRUE)
