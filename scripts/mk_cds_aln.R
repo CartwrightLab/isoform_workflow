@@ -104,6 +104,9 @@ align_cds_main <- function(input_fasta, input_info, input_csv) {
   # Extract Exons
   exons <- substring(ref_seq, exon_lefts, exon_rights)
 
+  # Update the reference sequence to match our expected CDS
+  fasta[[1]] <- paste0(exons, collapse = "")
+
   # Call CESAR
   blocks <- run_cesar(exons, fasta)
 
