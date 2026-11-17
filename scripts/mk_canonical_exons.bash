@@ -10,13 +10,27 @@ output_json="${2:-/dev/stdout}"
 
 jq -c "(.Transcript[] | select(.is_canonical == 1)) as \$t
   | \$t.Exon as \$e
-  | {id, version, seq_region_name, start, end, strand,
-    translation: (\$t.Translation | {id, version, start, end}),
-    exons: {
-      id: (\$e | map(.id)),
-      version: (\$e | map(.version)),
-      start: (\$e | map(.start)),
-      end: (\$e | map(.end))
-    }
-  }" \
+  | {
+      id: .id,
+      version: .version,
+      seq_region_name: .seq_region_name,
+      start: .start,
+      end: .end,
+      strand: .strand,
+      translation: (
+        \$t.Translation
+        | {
+            id: .id,
+            version: .version,
+            start: .start,
+            end: .end
+          }
+      ),
+      exons: {
+        id: (\$e | map(.id)),
+        version: (\$e | map(.version)),
+        start: (\$e | map(.start)),
+        end: (\$e | map(.end))
+      }
+    }" \
   "${input_json}" > "${output_json}"
